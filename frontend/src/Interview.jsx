@@ -27,23 +27,25 @@ const HIERARCHY_OPTIONS = [
   { value: 'operativ', label: 'Operative Ebene' },
 ];
 
-function PhaseIndicator({ phase }) {
-  const phases = ['Begrüssung', 'Erlebniskurve', 'Haupterzählung', 'Abschluss'];
+function detectBrowser() {
+  const ua = navigator.userAgent;
+  if (/Safari/.test(ua) && !/Chrome/.test(ua)) return 'safari';
+  if (/Chrome/.test(ua)) return 'chrome';
+  if (/Firefox/.test(ua)) return 'firefox';
+  return 'other';
+}
+
+function SpeechHint() {
+  const browser = detectBrowser();
+  const hints = {
+    chrome: 'Mikrofon-Button klicken — Chrome fragt einmalig nach Erlaubnis',
+    safari: 'Mikrofon-Button klicken — Safari fragt einmalig nach Erlaubnis',
+    firefox: 'Firefox unterstützt Spracheingabe nur eingeschränkt — Chrome oder Safari empfohlen',
+    other: 'Mikrofon-Button klicken um Spracheingabe zu aktivieren',
+  };
   return (
-    <div style={{ display: 'flex', marginBottom: '20px' }}>
-      {phases.map((p, i) => (
-        <div key={i} style={{
-          flex: 1,
-          padding: '8px 4px',
-          fontSize: '11px',
-          textAlign: 'center',
-          color: i === phase ? '#534AB7' : i < phase ? '#888' : '#bbb',
-          borderBottom: `2px solid ${i === phase ? '#534AB7' : i < phase ? '#ccc' : '#e5e5e0'}`,
-          fontWeight: i === phase ? '500' : '400',
-        }}>
-          {i + 1} · {p}
-        </div>
-      ))}
+    <div style={{ fontSize: '11px', color: '#999', marginTop: '6px' }}>
+      🎙️ {hints[browser]}
     </div>
   );
 }
@@ -81,10 +83,7 @@ function TypingIndicator() {
       <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: '#EEEDFE', color: '#3C3489', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '500', flexShrink: 0 }}>KI</div>
       <div style={{ padding: '12px 16px', background: '#fff', border: '1px solid #e5e5e0', borderRadius: '12px', display: 'flex', gap: '4px', alignItems: 'center' }}>
         {[0, 1, 2].map(i => (
-          <span key={i} style={{
-            width: '6px', height: '6px', borderRadius: '50%', background: '#bbb',
-            animation: 'pulse 1.2s infinite', animationDelay: `${i * 0.2}s`,
-          }} />
+          <span key={i} style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#bbb', animation: 'pulse 1.2s infinite', animationDelay: `${i * 0.2}s` }} />
         ))}
       </div>
     </div>
@@ -95,14 +94,14 @@ function NarrativeResult({ data, label }) {
   const classes = data?.classes || {};
   const sorted = Object.entries(classes).sort((a, b) => b[1] - a[1]);
   return (
-    <div style={{ background: '#fff', border: '1px solid #e5e5e0', borderRadius: '12px', padding: '20px', marginTop: '16px' }}>
-      <div style={{ fontSize: '13px', fontWeight: '500', color: '#666', marginBottom: '4px' }}>Interview {label} — Narrativ-Analyse</div>
-      <div style={{ fontSize: '12px', color: '#999', marginBottom: '16px' }}>{data?.summary}</div>
+    <div style={{ background: '#fff', border: '1px solid #e5e5e0', borderRadius: '12px', padding: '20px' }}>
+      <div style={{ fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>Interview {label} — gespeichert ✓</div>
+      <div style={{ fontSize: '12px', color: '#999', marginBottom: '16px', lineHeight: '1.6' }}>{data?.summary}</div>
       {sorted.map(([key, val]) => (
         <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
           <div style={{ width: '160px', fontSize: '12px', color: '#666', flexShrink: 0 }}>{CLASS_LABELS[key]}</div>
           <div style={{ flex: 1, background: '#f5f4f0', borderRadius: '3px', height: '7px' }}>
-            <div style={{ width: `${val}%`, height: '7px', borderRadius: '3px', background: CLASS_COLORS[key], transition: 'width 0.6s' }} />
+            <div style={{ width: `${val}%`, height: '7px', borderRadius: '3px', background: CLASS_COLORS[key] }} />
           </div>
           <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', color: '#888' }}>{val} %</div>
         </div>
@@ -114,6 +113,9 @@ function NarrativeResult({ data, label }) {
           ))}
         </div>
       )}
+      <div style={{ marginTop: '16px', fontSize: '13px', color: '#888' }}>
+        Das Interview ist im Dashboard sichtbar.
+      </div>
     </div>
   );
 }
@@ -123,24 +125,26 @@ export default function Interview() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState(0);
-  const [done, setDone] = useState(false);
-  const [hierarchyLevel, setHierarchyLevel] = useState('');
+  const [ended, setEnded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
+  const [hierarchyLevel, setHierarchyLevel] = useState('');
   const [startTime] = useState(Date.now());
+  const [listening, setListening] = useState(false);
+  const [interimText, setInterimText] = useState('');
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const recognitionRef = useRef(null);
   const chatRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) setSpeechSupported(true);
+  }, []);
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [messages, busy]);
-
-  function detectPhase(text) {
-    const t = text.toLowerCase();
-    if (t.includes('erlebniskurve') || t.includes('zeitachse')) setPhase(1);
-    else if ((t.includes('erzählen sie') || t.includes('erzählen sie mir')) && t.includes('anfang')) setPhase(2);
-    if (t.includes('herzlich bedanken') || t.includes('am ende angelangt')) setPhase(3);
-  }
 
   async function callAPI(msgs) {
     setBusy(true);
@@ -154,15 +158,12 @@ export default function Interview() {
       if (data.reply) {
         const updated = [...msgs, { role: 'assistant', content: data.reply }];
         setMessages(updated);
-        detectPhase(data.reply);
-        if (data.reply.toLowerCase().includes('auf wiederhören') || data.reply.toLowerCase().includes('gespräch ist hiermit beendet')) {
-          setDone(true);
-        }
       }
     } catch (e) {
       setMessages(m => [...m, { role: 'assistant', content: 'Verbindungsfehler. Bitte versuchen Sie es erneut.' }]);
     }
     setBusy(false);
+    setTimeout(() => inputRef.current?.focus(), 100);
   }
 
   async function startInterview() {
@@ -170,16 +171,60 @@ export default function Interview() {
     await callAPI([]);
   }
 
-  async function sendMsg() {
-    if (!input.trim() || busy) return;
-    const text = input.trim();
+  async function sendMsg(textOverride) {
+    const text = (textOverride || input).trim();
+    if (!text || busy || ended) return;
     setInput('');
+    setInterimText('');
     const updated = [...messages, { role: 'user', content: text }];
     setMessages(updated);
     await callAPI(updated);
   }
 
+  function toggleSpeech() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const rec = new SR();
+    rec.lang = 'de-DE';
+    rec.continuous = false;
+    rec.interimResults = true;
+    rec.onstart = () => setListening(true);
+    rec.onresult = (e) => {
+      let interim = '';
+      let final = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
+      }
+      if (final) {
+        setInput(prev => (prev + ' ' + final).trim());
+        setInterimText('');
+      } else {
+        setInterimText(interim);
+      }
+    };
+    rec.onerror = () => { setListening(false); setInterimText(''); };
+    rec.onend = () => { setListening(false); setInterimText(''); };
+    recognitionRef.current = rec;
+    rec.start();
+  }
+
+  function endInterview() {
+    if (window.confirm('Interview jetzt beenden und speichern?')) {
+      recognitionRef.current?.stop();
+      setEnded(true);
+    }
+  }
+
   async function saveInterview() {
+    if (messages.length < 2) {
+      alert('Das Interview ist zu kurz zum Speichern.');
+      return;
+    }
     setSaving(true);
     try {
       const duration = Math.round((Date.now() - startTime) / 60000);
@@ -188,7 +233,7 @@ export default function Interview() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           transcript: messages,
-          duration_minutes: duration,
+          duration_minutes: Math.max(duration, 1),
           hierarchy_level: hierarchyLevel || null,
           org_id: 'default',
         }),
@@ -196,11 +241,12 @@ export default function Interview() {
       const data = await res.json();
       setResult(data);
     } catch (e) {
-      alert('Fehler beim Speichern.');
+      alert('Fehler beim Speichern. Bitte versuchen Sie es erneut.');
     }
     setSaving(false);
   }
 
+  // Start screen
   if (!started) {
     return (
       <div style={{ textAlign: 'center', padding: '60px 20px' }}>
@@ -209,76 +255,112 @@ export default function Interview() {
         <p style={{ color: '#666', fontSize: '14px', maxWidth: '360px', margin: '0 auto 8px', lineHeight: '1.6' }}>
           Ein KI-Bot begleitet Sie durch ein Gespräch über Ihre Erfahrungen in der Organisation.
         </p>
-        <p style={{ color: '#999', fontSize: '13px', maxWidth: '360px', margin: '0 auto 32px', lineHeight: '1.6' }}>
+        <p style={{ color: '#999', fontSize: '13px', maxWidth: '360px', margin: '0 auto 28px', lineHeight: '1.6' }}>
           Dauer: 30–60 Minuten · Vollständig anonym · Keine richtigen oder falschen Antworten
         </p>
-        <div style={{ marginBottom: '24px' }}>
+        <div style={{ marginBottom: '28px' }}>
           <label style={{ fontSize: '13px', color: '#666', display: 'block', marginBottom: '8px' }}>Ihre Position (optional)</label>
-          <select
-            value={hierarchyLevel}
-            onChange={e => setHierarchyLevel(e.target.value)}
-            style={{ padding: '9px 12px', borderRadius: '8px', border: '1px solid #e5e5e0', fontSize: '13px', background: '#fff', color: '#1a1a1a', fontFamily: 'inherit', minWidth: '220px' }}
-          >
+          <select value={hierarchyLevel} onChange={e => setHierarchyLevel(e.target.value)}
+            style={{ padding: '9px 12px', borderRadius: '8px', border: '1px solid #e5e5e0', fontSize: '13px', background: '#fff', color: '#1a1a1a', fontFamily: 'inherit', minWidth: '220px' }}>
             {HIERARCHY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
-        <button
-          onClick={startInterview}
-          style={{ padding: '12px 32px', background: '#534AB7', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '15px', cursor: 'pointer', fontFamily: 'inherit' }}
-        >
+        {speechSupported && (
+          <div style={{ background: '#f5f4f0', borderRadius: '10px', padding: '12px 16px', maxWidth: '360px', margin: '0 auto 24px', textAlign: 'left' }}>
+            <div style={{ fontSize: '12px', fontWeight: '500', color: '#444', marginBottom: '4px' }}>Spracheingabe verfügbar</div>
+            <SpeechHint />
+          </div>
+        )}
+        <button onClick={startInterview}
+          style={{ padding: '12px 32px', background: '#534AB7', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '15px', cursor: 'pointer', fontFamily: 'inherit' }}>
           Interview starten
         </button>
       </div>
     );
   }
 
+  // Save/result screen
+  if (ended) {
+    return (
+      <div style={{ maxWidth: '560px', margin: '40px auto' }}>
+        <style>{`@keyframes pulse { 0%,80%,100%{opacity:0.3} 40%{opacity:1} }`}</style>
+        {!result ? (
+          <div style={{ background: '#fff', border: '1px solid #e5e5e0', borderRadius: '12px', padding: '28px', textAlign: 'center' }}>
+            <div style={{ fontSize: '22px', marginBottom: '12px' }}>✓</div>
+            <div style={{ fontSize: '15px', fontWeight: '500', marginBottom: '8px' }}>Interview beendet</div>
+            <p style={{ fontSize: '14px', color: '#666', marginBottom: '20px', lineHeight: '1.6' }}>
+              {messages.filter(m => m.role === 'user').length} Beiträge · ca. {Math.max(Math.round((Date.now() - startTime) / 60000), 1)} Min.
+            </p>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ fontSize: '13px', color: '#666', display: 'block', marginBottom: '8px' }}>Position bestätigen (optional)</label>
+              <select value={hierarchyLevel} onChange={e => setHierarchyLevel(e.target.value)}
+                style={{ padding: '9px 12px', borderRadius: '8px', border: '1px solid #e5e5e0', fontSize: '13px', background: '#fff', color: '#1a1a1a', fontFamily: 'inherit', minWidth: '220px' }}>
+                {HIERARCHY_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <button onClick={saveInterview} disabled={saving}
+              style={{ padding: '11px 28px', background: '#534AB7', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', cursor: saving ? 'not-allowed' : 'pointer', fontFamily: 'inherit', opacity: saving ? 0.7 : 1 }}>
+              {saving ? 'Wird analysiert und gespeichert…' : 'Speichern & analysieren'}
+            </button>
+          </div>
+        ) : (
+          <NarrativeResult data={result.narrative_classes} label={result.label} />
+        )}
+      </div>
+    );
+  }
+
+  // Interview screen
   return (
     <div>
       <style>{`@keyframes pulse { 0%,80%,100%{opacity:0.3} 40%{opacity:1} }`}</style>
-      <PhaseIndicator phase={phase} />
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+        <button onClick={endInterview}
+          style={{ padding: '6px 14px', background: 'transparent', border: '1px solid #e5e5e0', borderRadius: '6px', fontSize: '12px', color: '#888', cursor: 'pointer', fontFamily: 'inherit' }}>
+          Interview beenden
+        </button>
+      </div>
+
       <div ref={chatRef} style={{ background: '#f5f4f0', borderRadius: '12px', padding: '16px', minHeight: '320px', maxHeight: '420px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '12px' }}>
         {messages.map((m, i) => <ChatBubble key={i} role={m.role} text={m.content} />)}
         {busy && <TypingIndicator />}
       </div>
 
-      {!done ? (
-        <div style={{ display: 'flex', gap: '8px' }}>
+      <div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {speechSupported && (
+            <button onClick={toggleSpeech}
+              title={listening ? 'Aufnahme stoppen' : 'Spracheingabe starten'}
+              style={{
+                width: '40px', height: '40px', borderRadius: '50%', border: 'none', cursor: 'pointer',
+                background: listening ? '#E24B4A' : '#EEEDFE',
+                color: listening ? '#fff' : '#534AB7',
+                fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+                boxShadow: listening ? '0 0 0 4px rgba(226,75,74,0.15)' : 'none',
+                transition: 'all 0.2s',
+              }}>
+              {listening ? '⏹' : '🎙️'}
+            </button>
+          )}
           <input
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && sendMsg()}
-            placeholder="Ihre Antwort..."
+            ref={inputRef}
+            value={input + (interimText ? ' ' + interimText : '')}
+            onChange={e => { if (!listening) setInput(e.target.value); }}
+            onKeyDown={e => e.key === 'Enter' && !listening && sendMsg()}
+            placeholder={listening ? 'Sprechen Sie jetzt…' : 'Ihre Antwort…'}
             disabled={busy}
-            style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', border: '1px solid #e5e5e0', fontSize: '14px', background: '#fff', color: '#1a1a1a', fontFamily: 'inherit' }}
+            style={{ flex: 1, padding: '10px 14px', borderRadius: '8px', border: `1px solid ${listening ? '#E24B4A' : '#e5e5e0'}`, fontSize: '14px', background: listening ? '#fff8f8' : '#fff', color: '#1a1a1a', fontFamily: 'inherit' }}
           />
-          <button
-            onClick={sendMsg}
-            disabled={busy || !input.trim()}
-            style={{ padding: '10px 18px', background: busy || !input.trim() ? '#e5e5e0' : '#534AB7', color: busy || !input.trim() ? '#999' : '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', cursor: busy ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
-          >
+          <button onClick={() => sendMsg()}
+            disabled={busy || (!input.trim() && !interimText)}
+            style={{ padding: '10px 18px', background: busy || (!input.trim() && !interimText) ? '#e5e5e0' : '#534AB7', color: busy || (!input.trim() && !interimText) ? '#999' : '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', cursor: busy ? 'not-allowed' : 'pointer', fontFamily: 'inherit', flexShrink: 0 }}>
             Senden
           </button>
         </div>
-      ) : (
-        <div style={{ background: '#fff', border: '1px solid #e5e5e0', borderRadius: '12px', padding: '20px' }}>
-          {!result ? (
-            <>
-              <p style={{ fontSize: '14px', color: '#666', marginBottom: '16px' }}>
-                Das Interview ist beendet. Möchten Sie es speichern und analysieren?
-              </p>
-              <button
-                onClick={saveInterview}
-                disabled={saving}
-                style={{ padding: '10px 24px', background: '#534AB7', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '14px', cursor: 'pointer', fontFamily: 'inherit' }}
-              >
-                {saving ? 'Wird analysiert…' : 'Speichern & analysieren'}
-              </button>
-            </>
-          ) : (
-            <NarrativeResult data={result.narrative_classes} label={result.label} />
-          )}
-        </div>
-      )}
+        {speechSupported && <SpeechHint />}
+      </div>
     </div>
   );
 }
